@@ -1,0 +1,7 @@
+apiVersion: tpokki.github.com/v1alpha1
+kind: GatlingTask
+metadata:
+  name: example-gatlingtask
+spec:
+  # Add fields here
+  size: 3

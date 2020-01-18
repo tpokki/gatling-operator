@@ -1,0 +1,11 @@
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: gatling-operator
+subjects:
+- kind: ServiceAccount
+  name: gatling-operator
+roleRef:
+  kind: Role
+  name: gatling-operator
+  apiGroup: rbac.authorization.k8s.io

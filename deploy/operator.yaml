@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gatling-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: gatling-operator
+  template:
+    metadata:
+      labels:
+        name: gatling-operator
+    spec:
+      serviceAccountName: gatling-operator
+      containers:
+        - name: gatling-operator
+          # Replace this with the built image name
+          image: REPLACE_IMAGE
+          command:
+          - gatling-operator
+          imagePullPolicy: Always
+          env:
+            - name: WATCH_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OPERATOR_NAME
+              value: "gatling-operator"
