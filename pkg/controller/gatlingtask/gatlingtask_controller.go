@@ -112,8 +112,6 @@ func (r *ReconcileGatlingTask) Reconcile(request reconcile.Request) (reconcile.R
 
 	// Define new Configmap object
 	configMap := newConfigMapForCR(instance)
-
-	//configMap, err := r.updateConfigMap(reqLogger, instance)
 	err = r.updateObject(reqLogger, instance, &TaskObject{configMap})
 	if err != nil {
 		return reconcile.Result{}, err
@@ -121,35 +119,11 @@ func (r *ReconcileGatlingTask) Reconcile(request reconcile.Request) (reconcile.R
 
 	// Define a new Pod object
 	pod := newPodForCR(instance, configMap)
-
-	// Set GatlingTask instance as the owner and controller
-	if err := controllerutil.SetControllerReference(instance, pod, r.scheme); err != nil {
+	err = r.updateObject(reqLogger, instance, &TaskObject{pod})
+	if err != nil {
 		return reconcile.Result{}, err
 	}
 
-	// Check if this Pod already exists
-	found := &corev1.Pod{}
-	err = r.client.Get(context.TODO(), types.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a new Pod", "Pod.Namespace", pod.Namespace, "Pod.Name", pod.Name)
-		err = r.client.Create(context.TODO(), configMap)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		err = r.client.Create(context.TODO(), pod)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		// Pod created successfully - don't requeue
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Pod already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Pod already exists", "Pod.Namespace", found.Namespace, "Pod.Name", found.Name)
 	return reconcile.Result{}, nil
 }
 
@@ -194,37 +168,6 @@ func (r *ReconcileGatlingTask) updateObject(logr logr.Logger, cr *tpokkiv1alpha1
 	// ConfigMap already exists - don't requeue
 	logr.Info("Skip reconcile: Object already exists", "Type", reflect.TypeOf(object.object), "Namespace", object.metav1Object().GetNamespace(), "Name", object.metav1Object().GetName())
 	return nil
-}
-
-func (r *ReconcileGatlingTask) updateConfigMap(logr logr.Logger, cr *tpokkiv1alpha1.GatlingTask) (*corev1.ConfigMap, error) {
-
-	// Define new Configmap object
-	configMap := newConfigMapForCR(cr)
-
-	// Set GatlingTask instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, configMap, r.scheme); err != nil {
-		return nil, err
-	}
-
-	// Check if this ConfigMap already exists
-	found := &corev1.ConfigMap{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: configMap.Name, Namespace: configMap.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		logr.Info("Creating new ConfigMap", "ConfigMap.Namespace", configMap.Namespace, "ConfigMap.Name", configMap.Name)
-		err = r.client.Create(context.TODO(), configMap)
-		if err != nil {
-			return nil, err
-		}
-
-		// Pod created successfully - don't requeue
-		return configMap, nil
-	} else if err != nil {
-		return nil, err
-	}
-
-	// ConfigMap already exists - don't requeue
-	logr.Info("Skip reconcile: Pod already exists", "Pod.Namespace", found.Namespace, "Pod.Name", found.Name)
-	return configMap, nil
 }
 
 func newConfigMapForCR(cr *tpokkiv1alpha1.GatlingTask) *corev1.ConfigMap {
