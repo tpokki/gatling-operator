@@ -3,5 +3,17 @@ kind: GatlingTask
 metadata:
   name: example-gatlingtask
 spec:
-  # Add fields here
-  size: 3
+  replicas: 1
+  resources:
+    limits:
+      cpu: 1
+      memory: 500M
+    requests:
+      cpu: 200m
+      memory: 500M
+  scenario:
+    name: LoadScenario
+    definition: |
+      class LoadScenario {
+        // ...
+      }

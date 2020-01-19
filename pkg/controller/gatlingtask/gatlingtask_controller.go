@@ -51,9 +51,17 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 		return err
 	}
 
-	// TODO(user): Modify this to be the types you create that are owned by the primary resource
 	// Watch for changes to secondary resource Pods and requeue the owner GatlingTask
 	err = c.Watch(&source.Kind{Type: &corev1.Pod{}}, &handler.EnqueueRequestForOwner{
+		IsController: true,
+		OwnerType:    &tpokkiv1alpha1.GatlingTask{},
+	})
+	if err != nil {
+		return err
+	}
+
+	// Watch for changes to secondary resource ConfigMap and requeue the owner GatlingTask
+	err = c.Watch(&source.Kind{Type: &corev1.ConfigMap{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &tpokkiv1alpha1.GatlingTask{},
 	})
@@ -100,8 +108,16 @@ func (r *ReconcileGatlingTask) Reconcile(request reconcile.Request) (reconcile.R
 		return reconcile.Result{}, err
 	}
 
+	// Define new Configmap object
+	configMap := newConfigMapForCR(instance)
+
 	// Define a new Pod object
-	pod := newPodForCR(instance)
+	pod := newPodForCR(instance, configMap)
+
+	// Set GatlingTask instance as the owner and controller
+	if err := controllerutil.SetControllerReference(instance, configMap, r.scheme); err != nil {
+		return reconcile.Result{}, err
+	}
 
 	// Set GatlingTask instance as the owner and controller
 	if err := controllerutil.SetControllerReference(instance, pod, r.scheme); err != nil {
@@ -113,6 +129,11 @@ func (r *ReconcileGatlingTask) Reconcile(request reconcile.Request) (reconcile.R
 	err = r.client.Get(context.TODO(), types.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}, found)
 	if err != nil && errors.IsNotFound(err) {
 		reqLogger.Info("Creating a new Pod", "Pod.Namespace", pod.Namespace, "Pod.Name", pod.Name)
+		err = r.client.Create(context.TODO(), configMap)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+
 		err = r.client.Create(context.TODO(), pod)
 		if err != nil {
 			return reconcile.Result{}, err
@@ -129,11 +150,30 @@ func (r *ReconcileGatlingTask) Reconcile(request reconcile.Request) (reconcile.R
 	return reconcile.Result{}, nil
 }
 
-// newPodForCR returns a busybox pod with the same name/namespace as the cr
-func newPodForCR(cr *tpokkiv1alpha1.GatlingTask) *corev1.Pod {
+func newConfigMapForCR(cr *tpokkiv1alpha1.GatlingTask) *corev1.ConfigMap {
 	labels := map[string]string{
 		"app": cr.Name,
 	}
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cr.Name + "-configmap",
+			Namespace: cr.Namespace,
+			Labels:    labels,
+		},
+		Data: map[string]string{
+			cr.Spec.ScenarioSpec.Name: cr.Spec.ScenarioSpec.Definition,
+		},
+	}
+}
+
+// newPodForCR returns a busybox pod with the same name/namespace as the cr
+func newPodForCR(cr *tpokkiv1alpha1.GatlingTask, cm *corev1.ConfigMap) *corev1.Pod {
+	labels := map[string]string{
+		"app": cr.Name,
+	}
+	volumeName := "configmap-scenario"
+	volumePath := "/scenario/input"
+
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cr.Name + "-pod",
@@ -141,11 +181,31 @@ func newPodForCR(cr *tpokkiv1alpha1.GatlingTask) *corev1.Pod {
 			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{
+				{
+					Name: volumeName,
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: cm.ObjectMeta.Name,
+							},
+						},
+					},
+				},
+			},
+			RestartPolicy: "Never",
 			Containers: []corev1.Container{
 				{
-					Name:    "busybox",
-					Image:   "busybox",
-					Command: []string{"sleep", "3600"},
+					Name:      "gatling",
+					Image:     "busybox",
+					Command:   []string{"sleep", "3600"},
+					Resources: cr.Spec.ResourceRequirements,
+					VolumeMounts: []corev1.VolumeMount{
+						{
+							Name:      volumeName,
+							MountPath: volumePath,
+						},
+					},
 				},
 			},
 		},
