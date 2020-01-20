@@ -112,14 +112,14 @@ func (r *ReconcileGatlingTask) Reconcile(request reconcile.Request) (reconcile.R
 
 	// Define new Configmap object
 	configMap := newConfigMapForCR(instance)
-	err = r.updateObject(reqLogger, instance, &TaskObject{configMap})
+	err = r.updateObject(reqLogger, instance, configMap)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 
 	// Define a new Pod object
 	pod := newPodForCR(instance, configMap)
-	err = r.updateObject(reqLogger, instance, &TaskObject{pod})
+	err = r.updateObject(reqLogger, instance, pod)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -127,34 +127,22 @@ func (r *ReconcileGatlingTask) Reconcile(request reconcile.Request) (reconcile.R
 	return reconcile.Result{}, nil
 }
 
-type TaskObject struct {
-	object interface{}
-}
-
-func (t *TaskObject) runtimeObject() runtime.Object {
-	return t.object.(runtime.Object)
-}
-
-func (t *TaskObject) metav1Object() metav1.Object {
-	return t.object.(metav1.Object)
-}
-
-func (r *ReconcileGatlingTask) updateObject(logr logr.Logger, cr *tpokkiv1alpha1.GatlingTask, object *TaskObject) error {
+func (r *ReconcileGatlingTask) updateObject(logr logr.Logger, cr *tpokkiv1alpha1.GatlingTask, object metav1.Object) error {
 
 	// Define new Configmap object
 	//	configMap := newConfigMapForCR(cr)
 
 	// Set GatlingTask instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, object.metav1Object(), r.scheme); err != nil {
+	if err := controllerutil.SetControllerReference(cr, object, r.scheme); err != nil {
 		return err
 	}
 
 	// Check if this object already exists
-	found := object.runtimeObject()
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: object.metav1Object().GetName(), Namespace: object.metav1Object().GetNamespace()}, found)
+	found := object.(runtime.Object)
+	err := r.client.Get(context.TODO(), types.NamespacedName{Name: object.GetName(), Namespace: object.GetNamespace()}, found)
 	if err != nil && errors.IsNotFound(err) {
-		logr.Info("Creating new Object", "Type", reflect.TypeOf(object.object), "Namespace", object.metav1Object().GetNamespace(), "Name", object.metav1Object().GetName())
-		err = r.client.Create(context.TODO(), object.runtimeObject())
+		logr.Info("Creating new Object", "Type", reflect.TypeOf(object), "Namespace", object.GetNamespace(), "Name", object.GetName())
+		err = r.client.Create(context.TODO(), object.(runtime.Object))
 		if err != nil {
 			return err
 		}
@@ -166,7 +154,7 @@ func (r *ReconcileGatlingTask) updateObject(logr logr.Logger, cr *tpokkiv1alpha1
 	}
 
 	// ConfigMap already exists - don't requeue
-	logr.Info("Skip reconcile: Object already exists", "Type", reflect.TypeOf(object.object), "Namespace", object.metav1Object().GetNamespace(), "Name", object.metav1Object().GetName())
+	logr.Info("Skip reconcile: Object already exists", "Type", reflect.TypeOf(object), "Namespace", object.GetNamespace(), "Name", object.GetName())
 	return nil
 }
 
