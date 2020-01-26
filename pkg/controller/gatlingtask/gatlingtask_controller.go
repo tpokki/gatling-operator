@@ -177,8 +177,9 @@ func newDeploymentForCR(cr *tpokkiv1alpha1.GatlingTask, cm *corev1.ConfigMap) *a
 		"gatling_cr": cr.Name,
 	}
 
-	volumeName := "configmap-scenario"
-	volumePath := "/scenario/input"
+	volumeName := "configmap-simulations"
+	// location must be /input, see https://github.com/tpokki/gatling-image
+	volumePath := "/input"
 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -193,6 +194,10 @@ func newDeploymentForCR(cr *tpokkiv1alpha1.GatlingTask, cm *corev1.ConfigMap) *a
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
+					Annotations: map[string]string{
+						"prometheus.io/scrape": "true",
+						"prometheus.io/port":   "9102",
+					},
 				},
 				Spec: corev1.PodSpec{
 					Volumes: []corev1.Volume{
@@ -211,8 +216,8 @@ func newDeploymentForCR(cr *tpokkiv1alpha1.GatlingTask, cm *corev1.ConfigMap) *a
 					Containers: []corev1.Container{
 						{
 							Name:      "gatling",
-							Image:     "busybox",
-							Command:   []string{"sleep", "3600"},
+							Image:     "quay.io/tpokki/gatling:0.0.1-3.3.1-prometheus",
+							Args:      []string{"-nr", "-s", cr.Spec.ScenarioSpec.Name},
 							Resources: cr.Spec.ResourceRequirements,
 							VolumeMounts: []corev1.VolumeMount{
 								{
