@@ -2,8 +2,11 @@ package gatlingtask
 
 import (
 	"context"
+	"reflect"
 
+	logr "github.com/go-logr/logr"
 	tpokkiv1alpha1 "github.com/tpokki/gatling-operator/pkg/apis/tpokki/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -51,9 +54,17 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 		return err
 	}
 
-	// TODO(user): Modify this to be the types you create that are owned by the primary resource
 	// Watch for changes to secondary resource Pods and requeue the owner GatlingTask
-	err = c.Watch(&source.Kind{Type: &corev1.Pod{}}, &handler.EnqueueRequestForOwner{
+	err = c.Watch(&source.Kind{Type: &appsv1.Deployment{}}, &handler.EnqueueRequestForOwner{
+		IsController: true,
+		OwnerType:    &tpokkiv1alpha1.GatlingTask{},
+	})
+	if err != nil {
+		return err
+	}
+
+	// Watch for changes to secondary resource ConfigMap and requeue the owner GatlingTask
+	err = c.Watch(&source.Kind{Type: &corev1.ConfigMap{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &tpokkiv1alpha1.GatlingTask{},
 	})
@@ -100,52 +111,117 @@ func (r *ReconcileGatlingTask) Reconcile(request reconcile.Request) (reconcile.R
 		return reconcile.Result{}, err
 	}
 
+	// Define new Configmap object
+	configMap := newConfigMapForCR(instance)
+	err = r.updateObject(reqLogger, instance, configMap)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
 	// Define a new Pod object
-	pod := newPodForCR(instance)
-
-	// Set GatlingTask instance as the owner and controller
-	if err := controllerutil.SetControllerReference(instance, pod, r.scheme); err != nil {
+	pod := newDeploymentForCR(instance, configMap)
+	err = r.updateObject(reqLogger, instance, pod)
+	if err != nil {
 		return reconcile.Result{}, err
 	}
 
-	// Check if this Pod already exists
-	found := &corev1.Pod{}
-	err = r.client.Get(context.TODO(), types.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a new Pod", "Pod.Namespace", pod.Namespace, "Pod.Name", pod.Name)
-		err = r.client.Create(context.TODO(), pod)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		// Pod created successfully - don't requeue
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Pod already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Pod already exists", "Pod.Namespace", found.Namespace, "Pod.Name", found.Name)
 	return reconcile.Result{}, nil
 }
 
-// newPodForCR returns a busybox pod with the same name/namespace as the cr
-func newPodForCR(cr *tpokkiv1alpha1.GatlingTask) *corev1.Pod {
+func (r *ReconcileGatlingTask) updateObject(logr logr.Logger, cr *tpokkiv1alpha1.GatlingTask, object metav1.Object) error {
+
+	// Set GatlingTask instance as the owner and controller
+	if err := controllerutil.SetControllerReference(cr, object, r.scheme); err != nil {
+		return err
+	}
+
+	// Check if this object already exists
+	found := object.(runtime.Object)
+	err := r.client.Get(context.TODO(), types.NamespacedName{Name: object.GetName(), Namespace: object.GetNamespace()}, found)
+	if err != nil && errors.IsNotFound(err) {
+		logr.Info("Creating new Object", "Type", reflect.TypeOf(object), "Namespace", object.GetNamespace(), "Name", object.GetName())
+		err = r.client.Create(context.TODO(), object.(runtime.Object))
+		if err != nil {
+			return err
+		}
+
+		// Pod created successfully - don't requeue
+		return nil
+	} else if err != nil {
+		return err
+	}
+
+	// ConfigMap already exists - don't requeue
+	logr.Info("Skip reconcile: Object already exists", "Type", reflect.TypeOf(object), "Namespace", object.GetNamespace(), "Name", object.GetName())
+	return nil
+}
+
+func newConfigMapForCR(cr *tpokkiv1alpha1.GatlingTask) *corev1.ConfigMap {
 	labels := map[string]string{
 		"app": cr.Name,
 	}
-	return &corev1.Pod{
+	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      cr.Name + "-pod",
+			Name:      cr.Name + "-configmap",
 			Namespace: cr.Namespace,
 			Labels:    labels,
 		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name:    "busybox",
-					Image:   "busybox",
-					Command: []string{"sleep", "3600"},
+		Data: cr.Spec.ScenarioSpec.DataSource,
+	}
+}
+
+// newDeploymentForCR returns a busybox deployment with the same name/namespace as the cr
+func newDeploymentForCR(cr *tpokkiv1alpha1.GatlingTask, cm *corev1.ConfigMap) *appsv1.Deployment {
+	labels := map[string]string{
+		"app":        "gatling",
+		"gatling_cr": cr.Name,
+	}
+
+	volumeName := "configmap-scenario"
+	volumePath := "/scenario/input"
+
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cr.Name,
+			Namespace: cr.Namespace,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &cr.Spec.Replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{
+							Name: volumeName,
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: cm.ObjectMeta.Name,
+									},
+								},
+							},
+						},
+					},
+					RestartPolicy: cr.Spec.RestartPolicy,
+					Containers: []corev1.Container{
+						{
+							Name:      "gatling",
+							Image:     "busybox",
+							Command:   []string{"sleep", "3600"},
+							Resources: cr.Spec.ResourceRequirements,
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      volumeName,
+									MountPath: volumePath,
+								},
+							},
+						},
+					},
 				},
 			},
 		},

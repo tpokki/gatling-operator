@@ -13,8 +13,7 @@ spec:
       memory: 500M
   scenario:
     name: Example
-    data:
-      Example.scala: |
-        class Example {
-
-        }
+    container:
+      image: tpokki/gatling-examples
+      tag: latest
+      directory: /scenario/
