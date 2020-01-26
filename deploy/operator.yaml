@@ -16,7 +16,7 @@ spec:
       containers:
         - name: gatling-operator
           # Replace this with the built image name
-          image: quay.io/tpokki/gatling-operator
+          image: quay.io/tpokki/gatling-operator:0.0.1
           command:
           - gatling-operator
           imagePullPolicy: Always
