@@ -13,8 +13,6 @@ spec:
       memory: 500M
   scenario:
     name: Example
-    data:
-      Example.scala: |
-        class Example {
-
-        }
+    git:
+      repo: https://github.com/tpokki/gatling-operator.git
+      directory: examples/scenario/

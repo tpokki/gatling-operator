@@ -6,6 +6,7 @@ import (
 
 	logr "github.com/go-logr/logr"
 	tpokkiv1alpha1 "github.com/tpokki/gatling-operator/pkg/apis/tpokki/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,7 +55,7 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	}
 
 	// Watch for changes to secondary resource Pods and requeue the owner GatlingTask
-	err = c.Watch(&source.Kind{Type: &corev1.Pod{}}, &handler.EnqueueRequestForOwner{
+	err = c.Watch(&source.Kind{Type: &appsv1.Deployment{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &tpokkiv1alpha1.GatlingTask{},
 	})
@@ -118,7 +119,7 @@ func (r *ReconcileGatlingTask) Reconcile(request reconcile.Request) (reconcile.R
 	}
 
 	// Define a new Pod object
-	pod := newPodForCR(instance, configMap)
+	pod := newDeploymentForCR(instance, configMap)
 	err = r.updateObject(reqLogger, instance, pod)
 	if err != nil {
 		return reconcile.Result{}, err
@@ -128,9 +129,6 @@ func (r *ReconcileGatlingTask) Reconcile(request reconcile.Request) (reconcile.R
 }
 
 func (r *ReconcileGatlingTask) updateObject(logr logr.Logger, cr *tpokkiv1alpha1.GatlingTask, object metav1.Object) error {
-
-	// Define new Configmap object
-	//	configMap := newConfigMapForCR(cr)
 
 	// Set GatlingTask instance as the owner and controller
 	if err := controllerutil.SetControllerReference(cr, object, r.scheme); err != nil {
@@ -168,50 +166,60 @@ func newConfigMapForCR(cr *tpokkiv1alpha1.GatlingTask) *corev1.ConfigMap {
 			Namespace: cr.Namespace,
 			Labels:    labels,
 		},
-		Data: map[string]string{
-			cr.Spec.ScenarioSpec.Name: cr.Spec.ScenarioSpec.Definition,
-		},
+		Data: cr.Spec.ScenarioSpec.DataSource,
 	}
 }
 
-// newPodForCR returns a busybox pod with the same name/namespace as the cr
-func newPodForCR(cr *tpokkiv1alpha1.GatlingTask, cm *corev1.ConfigMap) *corev1.Pod {
+// newDeploymentForCR returns a busybox deployment with the same name/namespace as the cr
+func newDeploymentForCR(cr *tpokkiv1alpha1.GatlingTask, cm *corev1.ConfigMap) *appsv1.Deployment {
 	labels := map[string]string{
-		"app": cr.Name,
+		"app":        "gatling",
+		"gatling_cr": cr.Name,
 	}
+
 	volumeName := "configmap-scenario"
 	volumePath := "/scenario/input"
 
-	return &corev1.Pod{
+	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      cr.Name + "-pod",
+			Name:      cr.Name,
 			Namespace: cr.Namespace,
-			Labels:    labels,
 		},
-		Spec: corev1.PodSpec{
-			Volumes: []corev1.Volume{
-				{
-					Name: volumeName,
-					VolumeSource: corev1.VolumeSource{
-						ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{
-								Name: cm.ObjectMeta.Name,
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &cr.Spec.Replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: corev1.PodSpec{
+					Volumes: []corev1.Volume{
+						{
+							Name: volumeName,
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: cm.ObjectMeta.Name,
+									},
+								},
 							},
 						},
 					},
-				},
-			},
-			RestartPolicy: "Never",
-			Containers: []corev1.Container{
-				{
-					Name:      "gatling",
-					Image:     "busybox",
-					Command:   []string{"sleep", "3600"},
-					Resources: cr.Spec.ResourceRequirements,
-					VolumeMounts: []corev1.VolumeMount{
+					RestartPolicy: cr.Spec.RestartPolicy,
+					Containers: []corev1.Container{
 						{
-							Name:      volumeName,
-							MountPath: volumePath,
+							Name:      "gatling",
+							Image:     "busybox",
+							Command:   []string{"sleep", "3600"},
+							Resources: cr.Spec.ResourceRequirements,
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      volumeName,
+									MountPath: volumePath,
+								},
+							},
 						},
 					},
 				},
