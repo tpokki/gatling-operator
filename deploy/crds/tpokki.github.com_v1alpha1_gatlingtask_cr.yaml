@@ -6,7 +6,7 @@ spec:
   replicas: 1
   resources:
     limits:
-      cpu: 1
+      cpu: 1000m
       memory: 500M
     requests:
       cpu: 200m
@@ -26,7 +26,7 @@ spec:
             val scn = scenario("Example")
               .exec(
                 http("request_1")
-                  .get("/")
+                  .get("/computers")
               )
               .pause(60)
 
